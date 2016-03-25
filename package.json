@@ -1,0 +1,10 @@
+{
+  "name": "swagger-aspnet-codegen",
+  "version": "0.0.0",
+  "description": "swagger-aspnet-codegen",
+  "main": "app.js",
+  "author": {
+    "name": "vladimiryangurskiy",
+    "email": ""
+  }
+}
