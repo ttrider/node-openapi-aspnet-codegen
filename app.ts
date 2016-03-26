@@ -8,19 +8,21 @@ if (argv.h || argv.help) {
     printUsage();
 }
 
-var input = getPath(argv.input, argv.i);
+var input = getPath(argv.i);
 if (!input) {
     console.error("no input file specified");
     printUsage();
 }
 
-var modelOutput = getPath(argv.model, argv.m);
-if (!modelOutput) {
-    modelOutput = getPath(input, null, ".model.cs");
+var modelOutput = getPath(argv.m);
+var modelNamespace = argv.M;
+if (!modelNamespace) {
+    modelNamespace = "OpenApi";
 }
-var controllerOutput = getPath(argv.controller, argv.c);
-if (!controllerOutput) {
-    controllerOutput = getPath(input, null, ".controller.cs");
+var controllerOutput = getPath(argv.c);
+var controllerNamespace = argv.C;
+if (!controllerNamespace) {
+    controllerNamespace = "OpenApi";
 }
 
 console.log("reading " + input);
@@ -32,96 +34,12 @@ swaggerParser.validate(input, {
 })
     .then((api) => {
 
-        console.log("writing " + modelOutput);
-
-        var output = fs.WriteStream(modelOutput);
-        output.write("// <copyright company=\"AdaptCore Technologies\">\r\n");
-        output.write("// Copyright (c) 2013 - 2016 All Rights Reserved\r\n");
-        output.write("// </copyright>\r\n");
-        output.write("// ReSharper disable InconsistentNaming\r\n");
-
-        output.write("using System;\r\n");
-        output.write("using System.Collections.Generic;\r\n");
-        output.write("using System.Linq;\r\n");
-        output.write("using System.Web;\r\n");
-        output.write("using Newtonsoft.Json;\r\n");
-        output.write("using System.Xml.Serialization;\r\n");
-        output.write("\r\n");
-
-        output.write("namespace AdaptCore.Web.Models\r\n");
-        output.write("{\r\n");
-
-        for (var name in api.definitions) {
-            var item = api.definitions[name];
-            if (item.enum) {
-
-                output.write("\t[Flags]\r\n");
-                output.write("\tpublic enum ");
-                output.write(name);
-                output.write("\r\n");
-                output.write("\t{\r\n");
-
-                for (var i = 0; i < item.enum.length; i++) {
-                    var ei = item.enum[i];
-                    output.write("\t\t");
-                    output.write(ei.replace(":", " = ") + ",\r\n");
-                }
-                output.write("\t}\r\n\r\n");
-            } else {
-
-                output.write("\tpublic partial class ");
-                output.write(name);
-
-                var properties = item.properties;
-                var baseClass = "";
-
-                if (item.allOf) {
-                    for (var j = 0; j < item.allOf.length; j++) {
-                        
-                        if (item.allOf[j]["$ref"]) {
-                            baseClass = item.allOf[j]["$ref"].substring(14);
-                        }
-                        else if (item.allOf[j].properties) {
-                            properties = item.allOf[j].properties;
-                        }
-                    }
-                }
-
-                if (baseClass) {
-                    output.write(" : ");
-                    output.write(baseClass);
-                }
-
-                output.write("\r\n");
-                output.write("\t{\r\n");
-
-                for (var propname in properties) {
-                    var prop = properties[propname];
-
-                    var propType = getType(prop);
-
-                    output.write("\t\t[JsonProperty(NullValueHandling = NullValueHandling.Ignore, PropertyName = \"");
-                    output.write(propname[0].toLowerCase() + propname.substring(1));
-                    output.write("\")]\r\n");
-
-                    output.write("\t\tpublic ");
-                    output.write(propType);
-                    output.write(" ");
-                    output.write(propname[0].toUpperCase()+propname.substring(1));
-                    output.write(" { get; set;}\r\n");
-                }
-
-
-                output.write("\t}\r\n\r\n");
-            }
-
+        if (modelOutput) {
+            produceModel(api);
         }
-        output.write("}\r\n");
-        output.end();
-        //output.flush();
-        //output.close();
-
-        //process.exit(1);
+        if (controllerOutput) {
+            produceController(api);
+        }
 
     })
     .catch((err) => {
@@ -132,14 +50,282 @@ swaggerParser.validate(input, {
 
 function printUsage() {
     console.log("usage:");
-    console.log("  -i[nput] input file, .json or .yaml");
-    console.log("  -[m[odel]] model output");
-    console.log("  -[mn[amespace]] model namespace");
-    console.log("  -[c[ontroller]] controller output");
-    console.log("  -[cn[amespace]] controller namespace");
+    console.log("  -i <input file, .json or .yaml>");
+    console.log("   [-m <model output file>]");
+    console.log("   [-M <model namespace>]");
+    console.log("   [-c <controller output>]");
+    console.log("   [-C <controller namespace>]");
+    console.log("   [--copyright=\"<company name>:<from - to>\"]");
     process.exit(1);
 }
 
+
+function getSupportedSerialization(api): { enableJson: boolean, enableXml: boolean} {
+    
+    var enableJson = false;
+    var enableXml = false;
+    if (api.produces) {
+        for (var k = 0; k < api.produces.length; k++) {
+
+            if (!!api.produces[k].match(/json/gi)) {
+                enableJson = true;
+            }
+            if (!!api.produces[k].match(/xml/gi)) {
+                enableXml = true;
+            }
+        }
+    }
+
+    if (!enableJson && !enableXml) {
+        enableJson = true;
+    }
+
+    return {
+        enableJson: enableJson,
+        enableXml: enableXml
+    };
+}
+
+
+function produceModel(api) {
+    console.log("Generating model classes");
+    console.log("writing " + modelOutput);
+
+    var output = fs.WriteStream(modelOutput);
+
+    if (argv.copyright) {
+        outputCopyright(output, argv.copyright);
+    }
+
+
+    output.write("// ReSharper disable InconsistentNaming\r\n");
+    output.write("// ReSharper disable PartialTypeWithSinglePart\r\n");
+
+    output.write("using System;\r\n");
+    output.write("using System.Collections.Generic;\r\n");
+
+    var serialization = getSupportedSerialization(api);
+
+    if (serialization.enableJson) {
+        output.write("using Newtonsoft.Json;\r\n");
+    }
+    if (serialization.enableXml) {
+        output.write("using System.Xml.Serialization;\r\n");
+    }
+    output.write("\r\n");
+
+    output.write("namespace ");
+    output.write(modelNamespace);
+    output.write("\r\n{\r\n");
+
+    for (var name in api.definitions) {
+        var item = api.definitions[name];
+        if (item.enum) {
+
+            output.write("\t[Flags]\r\n");
+            output.write("\tpublic enum ");
+            output.write(name);
+            output.write("\r\n");
+            output.write("\t{\r\n");
+
+            for (var i = 0; i < item.enum.length; i++) {
+                var ei = item.enum[i];
+                output.write("\t\t");
+                output.write(ei.replace(":", " = ") + ",\r\n");
+            }
+            output.write("\t}\r\n\r\n");
+        } else {
+
+            output.write("\tpublic partial class ");
+            output.write(name);
+
+            var properties = item.properties;
+            var baseClass = "";
+
+            if (item.allOf) {
+                for (var j = 0; j < item.allOf.length; j++) {
+
+                    if (item.allOf[j]["$ref"]) {
+                        baseClass = item.allOf[j]["$ref"].substring(14);
+                    } else if (item.allOf[j].properties) {
+                        properties = item.allOf[j].properties;
+                    }
+                }
+            }
+
+            if (baseClass) {
+                output.write(" : ");
+                output.write(baseClass);
+            }
+
+            output.write("\r\n");
+            output.write("\t{\r\n");
+
+            for (var propname in properties) {
+                var prop = properties[propname];
+
+                var upperPropName = propname[0].toUpperCase() + propname.substring(1);
+                var lowerPropName = propname[0].toLowerCase() + propname.substring(1);
+
+                var propType = getType(prop);
+                if (serialization.enableJson) {
+                    output.write("\t\t[JsonProperty(NullValueHandling = NullValueHandling.Ignore, PropertyName = \"");
+                    output.write(lowerPropName);
+                    output.write("\")]\r\n");
+                }
+
+                if (serialization.enableXml) {
+                    if (isSimpleType(prop)) {
+                        output.write("\t\t[XmlAttribute(AttributeName = \"");
+                        output.write(upperPropName);
+                        output.write("\")]\r\n");
+                    }
+                    else if (isObjectType(prop)) {
+                        output.write("\t\t[XmlElement(ElementName = \"");
+                        output.write(upperPropName);
+                        output.write("\")]\r\n");
+                    }
+                    else if (isArrayType(prop)) {
+                        //TODO: use Array/Array Item here
+                        output.write("\t\t[XmlElement(ElementName = \"");
+                        output.write(upperPropName);
+                        output.write("\")]\r\n");
+                    }
+                }
+
+                output.write("\t\tpublic ");
+                output.write(propType);
+                output.write(" ");
+                output.write(upperPropName);
+                output.write(" { get; set;}\r\n");
+            }
+
+
+            output.write("\t}\r\n\r\n");
+        }
+
+    }
+    output.write("}\r\n");
+    output.end();
+}
+
+function produceController(api) {
+    console.log("Generating controller classes");
+    console.log("writing " + controllerOutput);
+
+    var output = fs.WriteStream(controllerOutput);
+
+    if (argv.copyright) {
+        outputCopyright(output, argv.copyright);
+    }
+
+
+    output.write("// ReSharper disable InconsistentNaming\r\n");
+    output.write("// ReSharper disable PartialTypeWithSinglePart\r\n");
+
+    output.write("using System;\r\n");
+    output.write("using System.Collections.Generic;\r\n");
+
+    var serialization = getSupportedSerialization(api);
+    output.write("\r\n");
+
+    output.write("namespace ");
+    output.write(controllerNamespace);
+    output.write("\r\n{\r\n");
+
+    //var bp = api.basePath.split(/\//);
+    //var controllerName = bp[bp.length - 1];
+
+    //for (var name in api.definitions) {
+    //    var item = api.definitions[name];
+    //    if (item.enum) {
+
+    //        output.write("\t[Flags]\r\n");
+    //        output.write("\tpublic enum ");
+    //        output.write(name);
+    //        output.write("\r\n");
+    //        output.write("\t{\r\n");
+
+    //        for (var i = 0; i < item.enum.length; i++) {
+    //            var ei = item.enum[i];
+    //            output.write("\t\t");
+    //            output.write(ei.replace(":", " = ") + ",\r\n");
+    //        }
+    //        output.write("\t}\r\n\r\n");
+    //    } else {
+
+    //        output.write("\tpublic partial class ");
+    //        output.write(name);
+
+    //        var properties = item.properties;
+    //        var baseClass = "";
+
+    //        if (item.allOf) {
+    //            for (var j = 0; j < item.allOf.length; j++) {
+
+    //                if (item.allOf[j]["$ref"]) {
+    //                    baseClass = item.allOf[j]["$ref"].substring(14);
+    //                } else if (item.allOf[j].properties) {
+    //                    properties = item.allOf[j].properties;
+    //                }
+    //            }
+    //        }
+
+    //        if (baseClass) {
+    //            output.write(" : ");
+    //            output.write(baseClass);
+    //        }
+
+    //        output.write("\r\n");
+    //        output.write("\t{\r\n");
+
+    //        for (var propname in properties) {
+    //            var prop = properties[propname];
+
+    //            var upperPropName = propname[0].toUpperCase() + propname.substring(1);
+    //            var lowerPropName = propname[0].toLowerCase() + propname.substring(1);
+
+    //            var propType = getType(prop);
+    //            if (serialization.enableJson) {
+    //                output.write("\t\t[JsonProperty(NullValueHandling = NullValueHandling.Ignore, PropertyName = \"");
+    //                output.write(lowerPropName);
+    //                output.write("\")]\r\n");
+    //            }
+
+    //            if (serialization.enableXml) {
+    //                if (isSimpleType(prop)) {
+    //                    output.write("\t\t[XmlAttribute(AttributeName = \"");
+    //                    output.write(upperPropName);
+    //                    output.write("\")]\r\n");
+    //                }
+    //                else if (isObjectType(prop)) {
+    //                    output.write("\t\t[XmlElement(ElementName = \"");
+    //                    output.write(upperPropName);
+    //                    output.write("\")]\r\n");
+    //                }
+    //                else if (isArrayType(prop)) {
+    //                    //TODO: use Array/Array Item here
+    //                    output.write("\t\t[XmlElement(ElementName = \"");
+    //                    output.write(upperPropName);
+    //                    output.write("\")]\r\n");
+    //                }
+    //            }
+
+    //            output.write("\t\tpublic ");
+    //            output.write(propType);
+    //            output.write(" ");
+    //            output.write(upperPropName);
+    //            output.write(" { get; set;}\r\n");
+    //        }
+
+
+    //        output.write("\t}\r\n\r\n");
+    //    }
+
+    //}
+    output.write("}\r\n");
+    output.end();
+}
 
 function coalesce(val1, val2 = null, val3 = null) {
     if (!val1) {
@@ -154,7 +340,7 @@ function coalesce(val1, val2 = null, val3 = null) {
     return val1;
 }
 
-function getPath(path1: string, path2:string, altExt?:string) {
+function getPath(path1: string, path2?: string, altExt?: string) {
     var p = coalesce(path1, path2);
 
     if (!p) {
@@ -171,7 +357,6 @@ function getPath(path1: string, path2:string, altExt?:string) {
 
     return path.join(parts.dir, parts.name + altExt);
 }
-
 
 function getType(prop) {
     if (prop["$ref"]) {
@@ -197,4 +382,28 @@ function getType(prop) {
     } else {
         return "object";
     }
+}
+
+function isSimpleType(prop) {
+    return !isObjectType(prop) && !isArrayType(prop);
+}
+
+function isObjectType(prop) {
+    return !!prop["$ref"];
+}
+
+function isArrayType(prop) {
+    return prop.type === "array";
+}
+
+
+
+function outputCopyright(output, copyright: string) {
+    var parts = copyright.split(":");
+    var company = parts[0];
+    var fromto = parts.length > 1 ? parts[1] : new Date().getFullYear();
+
+    output.write("// <copyright company=\"" + company + "\">\r\n");
+    output.write("// Copyright (c) " + fromto + " All Rights Reserved\r\n");
+    output.write("// </copyright>\r\n");
 }

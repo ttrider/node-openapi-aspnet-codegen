@@ -6,5 +6,9 @@
   "author": {
     "name": "vladimiryangurskiy",
     "email": ""
+  },
+  "dependencies": {
+    "minimist": "^1.2.0",
+    "swagger-parser": "^3.4.0"
   }
 }

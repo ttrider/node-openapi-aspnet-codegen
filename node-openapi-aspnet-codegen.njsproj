@@ -5,7 +5,7 @@
     <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
     <Name>swagger-aspnet-codegen</Name>
     <RootNamespace>swagger-aspnet-codegen</RootNamespace>
-    <ScriptArguments>-i C:\src\v3\Client\Web\ACApi.yaml -m C:\src\v3\Client\Web\Models\Api.cs</ScriptArguments>
+    <ScriptArguments>-i C:\src\playground\v3\Client\Web\wwwroot\swagger.yaml -m C:\src\playground\v3\Client\Web\Models\Api.cs -c C:\src\playground\v3\Client\Web\Controllers\Api.definition.cs -M AdaptCore.Web.Models -C AdaptCore.Web.Controllers --copyright="AdaptCore Technologies, Inc:2013 - 2016"</ScriptArguments>
   </PropertyGroup>
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
