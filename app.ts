@@ -270,7 +270,7 @@ function produceController(api) {
             }
 
             output.write("\t\t[Http" + toCSharpCase(verb.toLowerCase()) + "]\r\n");
-            output.write("\t\t[Route(\"" + pathName + "\")]\r\n");
+            output.write("\t\t[Route(\"" + api.basePath + pathName + "\")]\r\n");
             output.write("\t\tpublic Task");
             if (retType) {
                 output.write("<" + retType + ">");
