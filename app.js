@@ -129,8 +129,8 @@ function produceModel(api) {
             output.write("\t{\r\n");
             for (var propname in properties) {
                 var prop = properties[propname];
-                var upperPropName = propname[0].toUpperCase() + propname.substring(1);
-                var lowerPropName = propname[0].toLowerCase() + propname.substring(1);
+                var upperPropName = toCSharpCase(propname);
+                var lowerPropName = toJsonCase(propname);
                 var propType = getType(prop);
                 if (serialization.enableJson) {
                     output.write("\t\t[JsonProperty(NullValueHandling = NullValueHandling.Ignore, PropertyName = \"");
@@ -178,84 +178,82 @@ function produceController(api) {
     output.write("// ReSharper disable PartialTypeWithSinglePart\r\n");
     output.write("using System;\r\n");
     output.write("using System.Collections.Generic;\r\n");
+    output.write("using Microsoft.AspNet.Mvc;\r\n");
+    output.write("using System.Threading.Tasks;\r\n");
+    output.write("using " + modelNamespace + ";\r\n");
     var serialization = getSupportedSerialization(api);
     output.write("\r\n");
     output.write("namespace ");
     output.write(controllerNamespace);
     output.write("\r\n{\r\n");
-    //var bp = api.basePath.split(/\//);
-    //var controllerName = bp[bp.length - 1];
-    //for (var name in api.definitions) {
-    //    var item = api.definitions[name];
-    //    if (item.enum) {
-    //        output.write("\t[Flags]\r\n");
-    //        output.write("\tpublic enum ");
-    //        output.write(name);
-    //        output.write("\r\n");
-    //        output.write("\t{\r\n");
-    //        for (var i = 0; i < item.enum.length; i++) {
-    //            var ei = item.enum[i];
-    //            output.write("\t\t");
-    //            output.write(ei.replace(":", " = ") + ",\r\n");
-    //        }
-    //        output.write("\t}\r\n\r\n");
-    //    } else {
-    //        output.write("\tpublic partial class ");
-    //        output.write(name);
-    //        var properties = item.properties;
-    //        var baseClass = "";
-    //        if (item.allOf) {
-    //            for (var j = 0; j < item.allOf.length; j++) {
-    //                if (item.allOf[j]["$ref"]) {
-    //                    baseClass = item.allOf[j]["$ref"].substring(14);
-    //                } else if (item.allOf[j].properties) {
-    //                    properties = item.allOf[j].properties;
-    //                }
-    //            }
-    //        }
-    //        if (baseClass) {
-    //            output.write(" : ");
-    //            output.write(baseClass);
-    //        }
-    //        output.write("\r\n");
-    //        output.write("\t{\r\n");
-    //        for (var propname in properties) {
-    //            var prop = properties[propname];
-    //            var upperPropName = propname[0].toUpperCase() + propname.substring(1);
-    //            var lowerPropName = propname[0].toLowerCase() + propname.substring(1);
-    //            var propType = getType(prop);
-    //            if (serialization.enableJson) {
-    //                output.write("\t\t[JsonProperty(NullValueHandling = NullValueHandling.Ignore, PropertyName = \"");
-    //                output.write(lowerPropName);
-    //                output.write("\")]\r\n");
-    //            }
-    //            if (serialization.enableXml) {
-    //                if (isSimpleType(prop)) {
-    //                    output.write("\t\t[XmlAttribute(AttributeName = \"");
-    //                    output.write(upperPropName);
-    //                    output.write("\")]\r\n");
-    //                }
-    //                else if (isObjectType(prop)) {
-    //                    output.write("\t\t[XmlElement(ElementName = \"");
-    //                    output.write(upperPropName);
-    //                    output.write("\")]\r\n");
-    //                }
-    //                else if (isArrayType(prop)) {
-    //                    //TODO: use Array/Array Item here
-    //                    output.write("\t\t[XmlElement(ElementName = \"");
-    //                    output.write(upperPropName);
-    //                    output.write("\")]\r\n");
-    //                }
-    //            }
-    //            output.write("\t\tpublic ");
-    //            output.write(propType);
-    //            output.write(" ");
-    //            output.write(upperPropName);
-    //            output.write(" { get; set;}\r\n");
-    //        }
-    //        output.write("\t}\r\n\r\n");
-    //    }
-    //}
+    var bp = api.basePath.split(/\//);
+    var controllerName = bp[bp.length - 1];
+    output.write("\tpublic partial class ");
+    output.write(toCSharpCase(controllerName));
+    output.write("Controller : Controller\r\n\t{\r\n");
+    for (var pathName in api.paths) {
+        var pathItem = api.paths[pathName];
+        for (var verb in pathItem) {
+            var verbInfo = pathItem[verb];
+            var retType = null;
+            for (var retn in verbInfo.responses) {
+                var ret = verbInfo.responses[retn];
+                if (ret.schema) {
+                    retType = getType(ret.schema);
+                    break;
+                }
+            }
+            var methodName = toCSharpCase(verb.toLowerCase());
+            var nameParts = pathName.split("/");
+            for (var i = 0; i < nameParts.length; i++) {
+                var npp = toCSharpCase(nameParts[i].toLowerCase());
+                methodName = methodName + npp;
+            }
+            output.write("\t\t[Http" + toCSharpCase(verb.toLowerCase()) + "]\r\n");
+            output.write("\t\t[Route(\"" + pathName + "\")]\r\n");
+            output.write("\t\tpublic Task");
+            if (retType) {
+                output.write("<" + retType + ">");
+            }
+            output.write(" " + methodName + "Action(");
+            if (verbInfo.parameters) {
+                for (var j = 0; j < verbInfo.parameters.length; j++) {
+                    var param = verbInfo.parameters[0];
+                    if (j) {
+                        output.write(", ");
+                    }
+                    //Header 
+                    var paramIn = param.in.toLowerCase();
+                    var type = getType(param.schema);
+                    if (paramIn === "body" || paramIn === "form") {
+                        output.write("[FromBody]");
+                    }
+                    output.write(" ");
+                    output.write(type);
+                    output.write(" ");
+                    output.write(param.name);
+                }
+            }
+            output.write(")\r\n");
+            output.write("\t\t{\r\n");
+            output.write("\t\t\treturn ");
+            output.write("this.");
+            output.write(methodName);
+            output.write("(");
+            if (verbInfo.parameters) {
+                for (var j = 0; j < verbInfo.parameters.length; j++) {
+                    var param = verbInfo.parameters[0];
+                    if (j) {
+                        output.write(", ");
+                    }
+                    output.write(param.name);
+                }
+            }
+            output.write(");\r\n");
+            output.write("\t\t}\r\n");
+        }
+    }
+    output.write("\t}\r\n");
     output.write("}\r\n");
     output.end();
 }
@@ -319,6 +317,24 @@ function isObjectType(prop) {
 }
 function isArrayType(prop) {
     return prop.type === "array";
+}
+function toJsonCase(str) {
+    if (str && str.length > 0) {
+        var result = str[0].toLowerCase();
+        if (str.length > 1) {
+            return result + str.substring(1);
+        }
+    }
+    return str;
+}
+function toCSharpCase(str) {
+    if (str && str.length > 0) {
+        var result = str[0].toUpperCase();
+        if (str.length > 1) {
+            return result + str.substring(1);
+        }
+    }
+    return str;
 }
 function outputCopyright(output, copyright) {
     var parts = copyright.split(":");
