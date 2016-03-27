@@ -246,6 +246,10 @@ function produceController(api) {
 
     for (var pathName in api.paths) {
 
+        var route = api.basePath + pathName;
+
+        output.write("\t\t#region " + route + "\r\n\r\n");
+
         var pathItem = api.paths[pathName];
 
         for (var verb in pathItem) {
@@ -270,7 +274,7 @@ function produceController(api) {
             }
 
             output.write("\t\t[Http" + toCSharpCase(verb.toLowerCase()) + "]\r\n");
-            output.write("\t\t[Route(\"" + pathName + "\")]\r\n");
+            output.write("\t\t[Route(\"" + route + "\")]\r\n");
             output.write("\t\tpublic Task");
             if (retType) {
                 output.write("<" + retType + ">");
@@ -287,7 +291,8 @@ function produceController(api) {
 
                     //Header 
                     var paramIn = param.in.toLowerCase();
-                    var type = getType(param.schema);
+
+                    var type = getType(param);
 
                     if (paramIn === "body" || paramIn === "form") {
                         output.write("[FromBody]");
@@ -318,96 +323,12 @@ function produceController(api) {
             }
 
             output.write(");\r\n");
-            output.write("\t\t}\r\n");
+            output.write("\t\t}\r\n\r\n");
         }
 
+        
 
-
-        //for (var name in api.definitions) {
-        //    var item = api.definitions[name];
-        //    if (item.enum) {
-
-        //        output.write("\t[Flags]\r\n");
-        //        output.write("\tpublic enum ");
-        //        output.write(name);
-        //        output.write("\r\n");
-        //        output.write("\t{\r\n");
-
-        //        for (var i = 0; i < item.enum.length; i++) {
-        //            var ei = item.enum[i];
-        //            output.write("\t\t");
-        //            output.write(ei.replace(":", " = ") + ",\r\n");
-        //        }
-        //        output.write("\t}\r\n\r\n");
-        //    } else {
-
-        //        output.write("\tpublic partial class ");
-        //        output.write(name);
-
-        //        var properties = item.properties;
-        //        var baseClass = "";
-
-        //        if (item.allOf) {
-        //            for (var j = 0; j < item.allOf.length; j++) {
-
-        //                if (item.allOf[j]["$ref"]) {
-        //                    baseClass = item.allOf[j]["$ref"].substring(14);
-        //                } else if (item.allOf[j].properties) {
-        //                    properties = item.allOf[j].properties;
-        //                }
-        //            }
-        //        }
-
-        //        if (baseClass) {
-        //            output.write(" : ");
-        //            output.write(baseClass);
-        //        }
-
-        //        output.write("\r\n");
-        //        output.write("\t{\r\n");
-
-        //        for (var propname in properties) {
-        //            var prop = properties[propname];
-
-        //            var upperPropName = propname[0].toUpperCase() + propname.substring(1);
-        //            var lowerPropName = propname[0].toLowerCase() + propname.substring(1);
-
-        //            var propType = getType(prop);
-        //            if (serialization.enableJson) {
-        //                output.write("\t\t[JsonProperty(NullValueHandling = NullValueHandling.Ignore, PropertyName = \"");
-        //                output.write(lowerPropName);
-        //                output.write("\")]\r\n");
-        //            }
-
-        //            if (serialization.enableXml) {
-        //                if (isSimpleType(prop)) {
-        //                    output.write("\t\t[XmlAttribute(AttributeName = \"");
-        //                    output.write(upperPropName);
-        //                    output.write("\")]\r\n");
-        //                }
-        //                else if (isObjectType(prop)) {
-        //                    output.write("\t\t[XmlElement(ElementName = \"");
-        //                    output.write(upperPropName);
-        //                    output.write("\")]\r\n");
-        //                }
-        //                else if (isArrayType(prop)) {
-        //                    //TODO: use Array/Array Item here
-        //                    output.write("\t\t[XmlElement(ElementName = \"");
-        //                    output.write(upperPropName);
-        //                    output.write("\")]\r\n");
-        //                }
-        //            }
-
-        //            output.write("\t\tpublic ");
-        //            output.write(propType);
-        //            output.write(" ");
-        //            output.write(upperPropName);
-        //            output.write(" { get; set;}\r\n");
-        //        }
-
-
-        //        output.write("\t}\r\n\r\n");
-        //    }
+        output.write("\t\t#endregion " + pathName + "\r\n\r\n");
 
     }
     output.write("\t}\r\n");
@@ -447,13 +368,42 @@ function getPath(path1: string, path2?: string, altExt?: string) {
 }
 
 function getType(prop) {
+
+    if (prop.schema && prop.schema["$ref"]) {
+        return prop.schema["$ref"].substring(14);
+    }
+    else
     if (prop["$ref"]) {
         return prop["$ref"].substring(14);
     }
     else if (prop.type === "string") {
+        if (!prop.format) {
+            return "string";
+        }
+        else if (prop.format === "byte") {
+            return "byte";
+        }
+        else if (prop.format === "binary") {
+            return "byte";
+        }
+        else if (prop.format === "date") {
+            return "DateTime";
+        }
+        else if (prop.format === "date-time") {
+            return "DateTime";
+        }
         return prop.type;
     }
     else if (prop.type === "integer") {
+        if (!prop.format) {
+            return "int";
+        }
+        else if (prop.format === "int32") {
+            return "int";
+        }
+        else if (prop.format === "int64") {
+            return "long";
+        }
         return "int";
     }
     else if (prop.type === "boolean") {
@@ -463,7 +413,16 @@ function getType(prop) {
         return "object";
     }
     else if (prop.type === "number") {
-        return "long";
+        if (!prop.format) {
+            return "double";
+        }
+        else if (prop.format === "float") {
+            return "float";
+        }
+        else if (prop.format === "double") {
+            return "double";
+        }
+        return "double";
     }
     else if (prop.type === "array") {
         return "IEnumerable<" + getType(prop.items) + ">";

@@ -192,6 +192,8 @@ function produceController(api) {
     output.write(toCSharpCase(controllerName));
     output.write("Controller : Controller\r\n\t{\r\n");
     for (var pathName in api.paths) {
+        var route = api.basePath + pathName;
+        output.write("\t\t#region " + route + "\r\n\r\n");
         var pathItem = api.paths[pathName];
         for (var verb in pathItem) {
             var verbInfo = pathItem[verb];
@@ -210,7 +212,7 @@ function produceController(api) {
                 methodName = methodName + npp;
             }
             output.write("\t\t[Http" + toCSharpCase(verb.toLowerCase()) + "]\r\n");
-            output.write("\t\t[Route(\"" + pathName + "\")]\r\n");
+            output.write("\t\t[Route(\"" + route + "\")]\r\n");
             output.write("\t\tpublic Task");
             if (retType) {
                 output.write("<" + retType + ">");
@@ -224,7 +226,7 @@ function produceController(api) {
                     }
                     //Header 
                     var paramIn = param.in.toLowerCase();
-                    var type = getType(param.schema);
+                    var type = getType(param);
                     if (paramIn === "body" || paramIn === "form") {
                         output.write("[FromBody]");
                     }
@@ -250,8 +252,9 @@ function produceController(api) {
                 }
             }
             output.write(");\r\n");
-            output.write("\t\t}\r\n");
+            output.write("\t\t}\r\n\r\n");
         }
+        output.write("\t\t#endregion " + pathName + "\r\n\r\n");
     }
     output.write("\t}\r\n");
     output.write("}\r\n");
@@ -284,13 +287,40 @@ function getPath(path1, path2, altExt) {
     return path.join(parts.dir, parts.name + altExt);
 }
 function getType(prop) {
-    if (prop["$ref"]) {
+    if (prop.schema && prop.schema["$ref"]) {
+        return prop.schema["$ref"].substring(14);
+    }
+    else if (prop["$ref"]) {
         return prop["$ref"].substring(14);
     }
     else if (prop.type === "string") {
+        if (!prop.format) {
+            return "string";
+        }
+        else if (prop.format === "byte") {
+            return "byte";
+        }
+        else if (prop.format === "binary") {
+            return "byte";
+        }
+        else if (prop.format === "date") {
+            return "DateTime";
+        }
+        else if (prop.format === "date-time") {
+            return "DateTime";
+        }
         return prop.type;
     }
     else if (prop.type === "integer") {
+        if (!prop.format) {
+            return "int";
+        }
+        else if (prop.format === "int32") {
+            return "int";
+        }
+        else if (prop.format === "int64") {
+            return "long";
+        }
         return "int";
     }
     else if (prop.type === "boolean") {
@@ -300,7 +330,16 @@ function getType(prop) {
         return "object";
     }
     else if (prop.type === "number") {
-        return "long";
+        if (!prop.format) {
+            return "double";
+        }
+        else if (prop.format === "float") {
+            return "float";
+        }
+        else if (prop.format === "double") {
+            return "double";
+        }
+        return "double";
     }
     else if (prop.type === "array") {
         return "IEnumerable<" + getType(prop.items) + ">";
