@@ -20,6 +20,7 @@ var controllerNamespace = argv.C;
 if (!controllerNamespace) {
     controllerNamespace = "OpenApi";
 }
+var tsModelOutput = getPath(argv.t);
 console.log("reading " + input);
 swaggerParser.validate(input, {
     $refs: {
@@ -33,6 +34,9 @@ swaggerParser.validate(input, {
     if (controllerOutput) {
         produceController(api);
     }
+    if (tsModelOutput) {
+        produceClientModel(api);
+    }
 })
     .catch(function (err) {
     console.error(err.message);
@@ -45,6 +49,7 @@ function printUsage() {
     console.log("   [-M <model namespace>]");
     console.log("   [-c <controller output>]");
     console.log("   [-C <controller namespace>]");
+    console.log("   [-t <typescript model file>]");
     console.log("   [--copyright=\"<company name>:<from - to>\"]");
     process.exit(1);
 }
@@ -260,6 +265,295 @@ function produceController(api) {
     output.write("}\r\n");
     output.end();
 }
+function getClientClassProperties(api, item) {
+    var props = {};
+    if (item.properties) {
+        for (var p in item.properties) {
+            var pr = item.properties[p];
+            props[p] = pr;
+        }
+    }
+    if (item.allOf) {
+        for (var j = 0; j < item.allOf.length; j++) {
+            if (item.allOf[j]["$ref"]) {
+                var baseClass = item.allOf[j]["$ref"].substring(14);
+                var baseItem = api.definitions[baseClass];
+                if (baseItem) {
+                    var baseProperties = getClientClassProperties(api, baseItem);
+                    for (var p in baseProperties) {
+                        var pr = baseProperties[p];
+                        props[p] = pr;
+                    }
+                }
+            }
+            else if (item.allOf[j].properties) {
+                var properties = item.allOf[j].properties;
+                for (var p in properties) {
+                    var pr = properties[p];
+                    props[p] = pr;
+                }
+            }
+        }
+    }
+    return props;
+}
+function getRequestBodyProperty(parameters) {
+    if (parameters) {
+        for (var j = 0; j < parameters.length; j++) {
+            var param = parameters[0];
+            var paramIn = param.in.toLowerCase();
+            if (paramIn === "body" || paramIn === "form") {
+                return param;
+            }
+        }
+    }
+    return null;
+}
+function produceClientModel(api) {
+    console.log("Generating client model classes");
+    console.log("writing " + tsModelOutput);
+    var output = fs.WriteStream(tsModelOutput);
+    if (argv.copyright) {
+        outputCopyright(output, argv.copyright);
+    }
+    output.write("// ReSharper disable InconsistentNaming\r\n\r\n");
+    output.write("//#region enums\r\n");
+    for (var dname in api.definitions) {
+        var ditem = api.definitions[dname];
+        if (ditem.enum) {
+            output.write("export enum ");
+            output.write(dname);
+            output.write(" {\r\n");
+            for (var l = 0; l < ditem.enum.length; l++) {
+                output.write("\t");
+                output.write(ditem.enum[l].replace(":", " = ") + ",\r\n");
+            }
+            output.write("}\r\n\r\n");
+        }
+    }
+    output.write("//#endregion enums\r\n\r\n");
+    output.write("//#region classes\r\n");
+    for (var name in api.definitions) {
+        var item = api.definitions[name];
+        if (!item.enum) {
+            output.write("export class ");
+            output.write(name);
+            output.write(" {\r\n");
+            output.write("\tconstructor(\r\n");
+            var properties = getClientClassProperties(api, item);
+            var sep = "";
+            for (var propname in properties) {
+                var prop = properties[propname];
+                var lowerPropName = toJsonCase(propname);
+                var propType = getClientType(prop);
+                output.write("\t\t" + sep + "public ");
+                output.write(lowerPropName);
+                output.write("?: ");
+                output.write(propType);
+                output.write("\r\n");
+                sep = ", ";
+            }
+            output.write("\t) { }\r\n\r\n");
+            output.write("\tpublic static clone(source: ");
+            output.write(name);
+            output.write("): ");
+            output.write(name);
+            output.write(" {\r\n");
+            output.write("\t\tif (source == null) return source;\r\n");
+            output.write("\t\treturn new ");
+            output.write(name);
+            output.write("(");
+            var sep = "";
+            for (var propname in properties) {
+                var prop = properties[propname];
+                var lowerPropName = toJsonCase(propname);
+                output.write(sep);
+                output.write("source.");
+                output.write(lowerPropName);
+                sep = ", ";
+            }
+            output.write(");\r\n");
+            output.write("\t}\r\n");
+            output.write("}\r\n");
+        }
+    }
+    output.write("//#endregion classes\r\n\r\n");
+    output.write("//#region api\r\n\r\n");
+    var bp = api.basePath.split(/\//);
+    var controllerName = bp[bp.length - 1];
+    for (var pathName in api.paths) {
+        var route = api.basePath + pathName;
+        output.write("//#region " + route + "\r\n\r\n");
+        var pathItem = api.paths[pathName];
+        for (var verb in pathItem) {
+            var verbInfo = pathItem[verb];
+            var retType = null;
+            for (var retn in verbInfo.responses) {
+                var ret = verbInfo.responses[retn];
+                if (ret.schema) {
+                    retType = getClientType(ret.schema);
+                    break;
+                }
+            }
+            var methodName = toCSharpCase(verb.toLowerCase());
+            var nameParts = pathName.split(/\/|{|}/gi);
+            for (var i = 0; i < nameParts.length; i++) {
+                if (nameParts[i]) {
+                    var npp = toCSharpCase(nameParts[i].toLowerCase());
+                    methodName = methodName + npp;
+                }
+            }
+            methodName = toJsonCase(methodName);
+            output.write("export function ");
+            output.write(" " + methodName + "(");
+            var pathParameters = getPathParameters(verbInfo.parameters);
+            var bodyParameters = getBodyParameters(verbInfo.parameters);
+            var queryParameters = getQueryParameters(verbInfo.parameters);
+            var sep_1 = "";
+            for (var k = 0; k < pathParameters.length; k++) {
+                output.write(sep_1);
+                sep_1 = ", ";
+                output.write(pathParameters[k].name);
+                output.write(": ");
+                output.write(getClientType(pathParameters[k]));
+            }
+            for (var k = 0; k < bodyParameters.length; k++) {
+                output.write(sep_1);
+                sep_1 = ", ";
+                output.write(bodyParameters[k].name);
+                output.write("?: ");
+                output.write(getClientType(bodyParameters[k]));
+            }
+            for (var k = 0; k < queryParameters.length; k++) {
+                output.write(sep_1);
+                sep_1 = ", ";
+                output.write(queryParameters[k].name);
+                output.write("?: ");
+                output.write(getClientType(queryParameters[k]));
+            }
+            output.write(sep_1);
+            output.write("forceRefresh = false");
+            output.write("): ");
+            if (retType) {
+                output.write("JQueryPromise<");
+                output.write(retType);
+                output.write(">");
+            }
+            else {
+                output.write("JQueryXHR");
+            }
+            output.write(" {\r\n");
+            output.write("\tlet url = \"");
+            output.write(route);
+            output.write("\";\r\n");
+            for (var k = 0; k < pathParameters.length; k++) {
+                output.write("\turl = url.replace(/{");
+                output.write(pathParameters[k].name);
+                output.write("}/gi,");
+                output.write(pathParameters[k].name);
+                output.write(");\r\n");
+            }
+            output.write("\tif (url.length > 0 && url[0] !== \"/\") {\r\n");
+            output.write("\t\turl = \"/\" + url;\r\n\t}\r\n");
+            sep_1 = "";
+            if (queryParameters.length > 0) {
+                output.write("\turl = url + \"?\"");
+                for (var j = 0; j < queryParameters.length; j++) {
+                    output.write(" + \"");
+                    output.write(sep_1);
+                    output.write("\" + \"");
+                    output.write(encodeURIComponent(queryParameters[j].name));
+                    output.write("=\" + (!");
+                    output.write(queryParameters[j].name);
+                    output.write(" ? \"\" : encodeURIComponent(");
+                    output.write(queryParameters[j].name);
+                    output.write(".toString()))");
+                    sep_1 = "&";
+                }
+                output.write(";\r\n");
+            }
+            // prep url here
+            output.write("\tvar settings: JQueryAjaxSettings = {\r\n");
+            var dataParam = getRequestBodyProperty(verbInfo.parameters);
+            if (dataParam) {
+                output.write("\t\tdata: !");
+                output.write(dataParam.name);
+                output.write(" ? \"{}\" : JSON.stringify(");
+                output.write(dataParam.name);
+                output.write("),\r\n");
+            }
+            output.write("\t\turl: url,\r\n");
+            output.write("\t\ttype: \"" + verb.toUpperCase() + "\",\r\n");
+            output.write("\t\tdataType: \"json\",\r\n");
+            output.write("\t\tcontentType: \"application/json; charset=utf-8\"\r\n");
+            output.write("\t};\r\n\treturn $.ajax(settings);\r\n");
+            output.write("}\r\n\r\n");
+        }
+        output.write("//#endregion " + route + "\r\n\r\n");
+    }
+    output.write("//#endregion api\r\n\r\n");
+    output.write("function getRouteUrl(route: string, args: any, queryString?: any): string {\r\n");
+    output.write("\tlet ret = route;\r\n");
+    output.write("\tif (args) {\r\n");
+    output.write(" \t\tfor (let argName in args) {\r\n");
+    output.write("\t\t\tif (args.hasOwnProperty(argName)) {\r\n");
+    output.write("\t\t\t\tret = ret.replace(new RegExp(\"{\" + argName + \"}\", \"g\"), args[argName]);\r\n");
+    output.write("\t\t\t}\r\n");
+    output.write("\t\t}\r\n");
+    output.write("\t}\r\n");
+    output.write("\tif (ret.length > 0 || ret[0] !== \"/\") {\r\n");
+    output.write("\t\tret = \"/\" + ret;\r\n");
+    output.write("\t}\r\n");
+    output.write("\r\n");
+    output.write("\tif (queryString) {\r\n");
+    output.write("\t\tlet sep = \"?\";\r\n");
+    output.write("\t\tfor (let queryName in queryString) {\r\n");
+    output.write("\t\t\tif (queryString.hasOwnProperty(queryName)) {\r\n");
+    output.write("\t\t\t\tlet nm = encodeURIComponent(queryName);\r\n");
+    output.write("\t\t\t\tlet val = encodeURIComponent(queryString[queryName] != null ? queryString[queryName] : \"\");\r\n");
+    output.write("\t\t\t\tret = ret + sep + nm + \"=\" + val;\r\n");
+    output.write("\t\t\t\tsep = \"&\";\r\n");
+    output.write("\t\t\t}\r\n");
+    output.write("\t\t}\r\n");
+    output.write("\t}\r\n");
+    output.write("\treturn ret;\r\n");
+    output.write("}\r\n");
+    output.end();
+}
+function getPathParameters(parameters) {
+    var ret = [];
+    if (parameters) {
+        for (var j = 0; j < parameters.length; j++) {
+            if (parameters[j].in.toLowerCase() === "path") {
+                ret.push(parameters[j]);
+            }
+        }
+    }
+    return ret;
+}
+function getBodyParameters(parameters) {
+    var ret = [];
+    if (parameters) {
+        for (var j = 0; j < parameters.length; j++) {
+            var p = parameters[j].in.toLowerCase();
+            if (p === "body" || p === "form") {
+                ret.push(parameters[j]);
+            }
+        }
+    }
+    return ret;
+}
+function getQueryParameters(parameters) {
+    var ret = [];
+    if (parameters) {
+        for (var j = 0; j < parameters.length; j++) {
+            if (parameters[j].in.toLowerCase() === "query") {
+                ret.push(parameters[j]);
+            }
+        }
+    }
+    return ret;
+}
 function coalesce(val1, val2, val3) {
     if (val2 === void 0) { val2 = null; }
     if (val3 === void 0) { val3 = null; }
@@ -346,6 +640,35 @@ function getType(prop) {
     }
     else {
         return "object";
+    }
+}
+function getClientType(prop) {
+    if (prop.schema && prop.schema["$ref"]) {
+        return prop.schema["$ref"].substring(14);
+    }
+    else if (prop["$ref"]) {
+        return prop["$ref"].substring(14);
+    }
+    else if (prop.type === "string") {
+        return "string";
+    }
+    else if (prop.type === "integer") {
+        return "number";
+    }
+    else if (prop.type === "boolean") {
+        return "Boolean";
+    }
+    else if (prop.type === "object") {
+        return "any";
+    }
+    else if (prop.type === "number") {
+        return "number";
+    }
+    else if (prop.type === "array") {
+        return "Array<" + getClientType(prop.items) + ">";
+    }
+    else {
+        return "any";
     }
 }
 function isSimpleType(prop) {
